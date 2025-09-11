@@ -9,32 +9,32 @@ steps:
 
         # 👇 List of trigger names to wait for
         WATCHED_TRIGGERS=("trigger-1" "trigger-2" "trigger-3")
-        TRIGGER_PATTERN="$(IFS=\|; echo "${WATCHED_TRIGGERS[*]}")"
+        TRIGGER_PATTERN="$$(IFS=\|; echo "$${WATCHED_TRIGGERS[*]}")"
 
         TIMEOUT=300  # 5 minutes
-        START_TIME=$(date +%s)
+        START_TIME=$$(date +%s)
 
         while true; do
           echo "🔍 Fetching ongoing builds from asia-south1..."
-          ALL_BUILDS=$(gcloud builds list --ongoing --region=asia-south1 \
+          ALL_BUILDS=$$(gcloud builds list --ongoing --region=asia-south1 \
             --format="table(id,createTime,status,substitutions.TRIGGER_NAME)")
 
-          echo "$ALL_BUILDS"
+          echo "$$ALL_BUILDS"
 
-          RUNNING_BUILDS=$(echo "$ALL_BUILDS" | grep -iE "$TRIGGER_PATTERN" || true)
+          RUNNING_BUILDS=$$(echo "$$ALL_BUILDS" | grep -iE "$$TRIGGER_PATTERN" || true)
 
-          if [[ -z "$RUNNING_BUILDS" ]]; then
+          if [[ -z "$$RUNNING_BUILDS" ]]; then
             echo "✅ None of the watched triggers are running. Proceeding..."
             break
           fi
 
           echo "🔄 Found running builds for watched triggers:"
-          echo "$RUNNING_BUILDS"
+          echo "$$RUNNING_BUILDS"
 
-          CURRENT_TIME=$(date +%s)
-          ELAPSED=$((CURRENT_TIME - START_TIME))
+          CURRENT_TIME=$$(date +%s)
+          ELAPSED=$$((CURRENT_TIME - START_TIME))
 
-          if [[ $ELAPSED -ge $TIMEOUT ]]; then
+          if [[ $$ELAPSED -ge $$TIMEOUT ]]; then
             echo "⚠️ Timeout reached (5 minutes). Proceeding with build anyway..."
             break
           fi
