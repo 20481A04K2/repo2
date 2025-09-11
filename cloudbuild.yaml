@@ -1,5 +1,5 @@
 steps:
-  # Step 1: Wait for specific triggers to finish (max 5 minutes)
+  # Step 1: Wait for specific triggers to finish (infinite check)
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: bash
     args:
@@ -7,40 +7,53 @@ steps:
       - |
         echo "⏳ Checking if selected triggers are running before starting build..."
 
-        # 👇 List of trigger names to wait for
+        # 👇 List of trigger names to wait for (adjust as needed)
         WATCHED_TRIGGERS=("trigger-1" "trigger-3")
         TRIGGER_PATTERN="$$(IFS=\|; echo "$${WATCHED_TRIGGERS[*]}")"
 
-        TIMEOUT=300  # 5 minutes
-        START_TIME=$$(date +%s)
-
         while true; do
           echo "🔍 Fetching ongoing builds from asia-south1..."
-          ALL_BUILDS=$$(gcloud builds list --ongoing --region=asia-south1 \
-            --format="table(id,createTime,status,substitutions.TRIGGER_NAME)")
-
-          echo "$$ALL_BUILDS"
+          ALL_BUILDS=$$(gcloud builds list --region=asia-south1 \
+            --format="value(id,status,substitutions.TRIGGER_NAME)")
 
           RUNNING_BUILDS=$$(echo "$$ALL_BUILDS" | grep -iE "$$TRIGGER_PATTERN" || true)
 
           if [[ -z "$$RUNNING_BUILDS" ]]; then
-            echo "✅ None of the watched triggers are running. Proceeding..."
+            echo "✅ None of the watched triggers are running."
+
+            # ✅ Now check last build status of each watched trigger
+            for TRIGGER in "$${WATCHED_TRIGGERS[@]}"; do
+              echo "🔎 Checking latest build status for $$TRIGGER..."
+              LATEST_BUILD=$$(gcloud builds list --region=asia-south1 \
+                --filter="substitutions.TRIGGER_NAME=$$TRIGGER" \
+                --sort-by="~createTime" --limit=1 \
+                --format="value(id,status)")
+
+              BUILD_ID=$$(echo "$$LATEST_BUILD" | awk '{print $$1}')
+              STATUS=$$(echo "$$LATEST_BUILD" | awk '{print $$2}')
+
+              if [[ -n "$$BUILD_ID" ]]; then
+                echo "➡️  Latest build for $$TRIGGER: $$BUILD_ID ($$STATUS)"
+                if [[ "$$STATUS" == "SUCCESS" ]]; then
+                  echo "✅ $$TRIGGER completed successfully. Waiting 90 seconds before proceeding..."
+                  sleep 90
+                elif [[ "$$STATUS" == "FAILURE" || "$$STATUS" == "CANCELLED" ]]; then
+                  echo "⚠️ $$TRIGGER failed/cancelled. Waiting 30 seconds before proceeding..."
+                  sleep 30
+                else
+                  echo "⏳ $$TRIGGER has an unknown status ($$STATUS). Proceeding without extra wait."
+                fi
+              else
+                echo "ℹ️ No previous build found for $$TRIGGER. Proceeding without wait."
+              fi
+            done
             break
           fi
 
           echo "🔄 Found running builds for watched triggers:"
           echo "$$RUNNING_BUILDS"
-
-          CURRENT_TIME=$$(date +%s)
-          ELAPSED=$$((CURRENT_TIME - START_TIME))
-
-          if [[ $$ELAPSED -ge $$TIMEOUT ]]; then
-            echo "⚠️ Timeout reached (5 minutes). Proceeding with build anyway..."
-            break
-          fi
-
-          echo "⏱ Waiting 30 seconds before checking again..."
-          sleep 30
+          echo "⏱ Waiting 20 seconds before checking again..."
+          sleep 20
         done
 
   # Step 2: Docker Build
