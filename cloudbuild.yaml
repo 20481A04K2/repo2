@@ -8,7 +8,7 @@ steps:
         echo "⏳ Checking if selected triggers are running before starting build..."
 
         # 👇 List of trigger names to wait for
-        WATCHED_TRIGGERS=("trigger-1" "trigger-2" "trigger-3")
+        WATCHED_TRIGGERS=("trigger-1" "trigger-3")
         TRIGGER_PATTERN="$$(IFS=\|; echo "$${WATCHED_TRIGGERS[*]}")"
 
         TIMEOUT=300  # 5 minutes
