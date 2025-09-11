@@ -6,39 +6,40 @@ steps:
       - -c
       - |
         echo "⏳ Checking if selected triggers are running before starting build..."
-        PROJECT_ID=$$(gcloud config get-value project)
 
-        # 👇 Specify the triggers you want to wait for
+        # 👇 List of trigger names to wait for
         WATCHED_TRIGGERS=("trigger-1" "trigger-2" "trigger-3")
+        TRIGGER_PATTERN="$(IFS=\|; echo "${WATCHED_TRIGGERS[*]}")"
 
         TIMEOUT=300  # 5 minutes
-        START_TIME=$$(date +%s)
+        START_TIME=$(date +%s)
 
         while true; do
-          # Get ongoing builds with trigger name filter
-          RUNNING_BUILDS=$$(gcloud builds list --ongoing \
-            --format="value(id,substitutions.TRIGGER_NAME)")
+          echo "🔍 Fetching ongoing builds from asia-south1..."
+          ALL_BUILDS=$(gcloud builds list --ongoing --region=asia-south1 \
+            --format="table(id,createTime,status,substitutions.TRIGGER_NAME)")
 
-          # Filter to only watched triggers
-          MATCHED_BUILDS=$$(echo "$$RUNNING_BUILDS" | grep -E "$$(IFS=\|; echo "$${WATCHED_TRIGGERS[*]}")" || true)
+          echo "$ALL_BUILDS"
 
-          if [[ -z "$$MATCHED_BUILDS" ]]; then
+          RUNNING_BUILDS=$(echo "$ALL_BUILDS" | grep -iE "$TRIGGER_PATTERN" || true)
+
+          if [[ -z "$RUNNING_BUILDS" ]]; then
             echo "✅ None of the watched triggers are running. Proceeding..."
             break
           fi
 
           echo "🔄 Found running builds for watched triggers:"
-          echo "$$MATCHED_BUILDS"
+          echo "$RUNNING_BUILDS"
 
-          CURRENT_TIME=$$(date +%s)
-          ELAPSED=$$((CURRENT_TIME - START_TIME))
+          CURRENT_TIME=$(date +%s)
+          ELAPSED=$((CURRENT_TIME - START_TIME))
 
-          if [[ $$ELAPSED -ge $$TIMEOUT ]]; then
+          if [[ $ELAPSED -ge $TIMEOUT ]]; then
             echo "⚠️ Timeout reached (5 minutes). Proceeding with build anyway..."
             break
           fi
 
-          echo "Sleeping 30 seconds before checking again..."
+          echo "⏱ Waiting 30 seconds before checking again..."
           sleep 30
         done
 
@@ -58,7 +59,6 @@ steps:
         'push',
         'asia-south1-docker.pkg.dev/divine-course-470809-f6/deploy-to-cloudrun/cloudrun-app:latest'
       ]
-
 
 timeout: 1200s
 options:
