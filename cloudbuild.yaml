@@ -6,7 +6,7 @@ steps:
       - |
         echo "⏳ Checking current trigger against actively running triggers..."
 
-        WATCHED_TRIGGERS=("trigger-1" "trigger-2" "trigger-3")
+        WATCHED_TRIGGERS=("trigger-1"  "trigger-3")
         CURRENT_TRIGGER="$${_TRIGGER_NAME:-trigger-2}"
         echo "ℹ️ Current Trigger: $$CURRENT_TRIGGER"
 
