@@ -108,3 +108,4 @@ options:
   logging: CLOUD_LOGGING_ONLY
 substitutions:
   _TRIGGER_NAME: "trigger-2"
+  
