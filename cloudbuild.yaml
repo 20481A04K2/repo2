@@ -10,45 +10,45 @@ steps:
         echo "⏳ Checking ongoing triggers and MIG VM readiness..."
 
         WATCHED_TRIGGERS=("trigger-1" "trigger-3")
-        CURRENT_TRIGGER="${_TRIGGER_NAME:-trigger-2}"
+        CURRENT_TRIGGER="$${_TRIGGER_NAME:-trigger-2}"
         MIG_NAME="vamsi-mig"
         ZONE="asia-east1-b"
 
-        echo "ℹ️ Current Trigger: $CURRENT_TRIGGER"
+        echo "ℹ️ Current Trigger: $$CURRENT_TRIGGER"
 
         # Get current build info for this trigger
-        CURRENT_BUILD_INFO=$(gcloud builds list --region=asia-east1 \
-          --filter="status:(WORKING OR QUEUED) AND substitutions.TRIGGER_NAME=$CURRENT_TRIGGER" \
+        CURRENT_BUILD_INFO=$$(gcloud builds list --region=asia-east1 \
+          --filter="status:(WORKING OR QUEUED) AND substitutions.TRIGGER_NAME=$$CURRENT_TRIGGER" \
           --sort-by="~createTime" --limit=1 --format="value(id,createTime)")
 
-        if [[ -z "$CURRENT_BUILD_INFO" ]]; then
-          echo "⚠️ No ongoing build found for $CURRENT_TRIGGER."
+        if [[ -z "$$CURRENT_BUILD_INFO" ]]; then
+          echo "⚠️ No ongoing build found for $$CURRENT_TRIGGER."
           exit 0
         fi
 
-        CURRENT_BUILD_ID=$(echo "$CURRENT_BUILD_INFO" | awk '{print $1}')
-        CURRENT_START_TIME=$(echo "$CURRENT_BUILD_INFO" | awk '{print $2}')
+        CURRENT_BUILD_ID=$$(echo "$$CURRENT_BUILD_INFO" | awk '{print $$1}')
+        CURRENT_START_TIME=$$(echo "$$CURRENT_BUILD_INFO" | awk '{print $$2}')
 
-        echo "⏰ Current build $CURRENT_BUILD_ID started at: $CURRENT_START_TIME"
+        echo "⏰ Current build $$CURRENT_BUILD_ID started at: $$CURRENT_START_TIME"
 
         # Function to wait for a build to finish
         wait_for_build() {
-          local TRIGGER_NAME=$1
-          local BUILD_ID=$2
+          local TRIGGER_NAME=$$1
+          local BUILD_ID=$$2
           while true; do
-            STATUS=$(gcloud builds describe $BUILD_ID --region=asia-east1 --format="value(status)")
-            if [[ "$STATUS" == "SUCCESS" || "$STATUS" == "FAILURE" || "$STATUS" == "CANCELLED" ]]; then
-              echo "🔹 $TRIGGER_NAME build $BUILD_ID finished with $STATUS"
+            STATUS=$$(gcloud builds describe $$BUILD_ID --region=asia-east1 --format="value(status)")
+            if [[ "$$STATUS" == "SUCCESS" || "$$STATUS" == "FAILURE" || "$$STATUS" == "CANCELLED" ]]; then
+              echo "🔹 $$TRIGGER_NAME build $$BUILD_ID finished with $$STATUS"
               break
             fi
-            echo "⏱ $TRIGGER_NAME build $BUILD_ID still running, waiting 15s..."
+            echo "⏱ $$TRIGGER_NAME build $$BUILD_ID still running, waiting 15s..."
             sleep 15
           done
-          if [[ "$STATUS" == "SUCCESS" ]]; then
-            echo "✅ $TRIGGER_NAME succeeded. Waiting 90 seconds..."
+          if [[ "$$STATUS" == "SUCCESS" ]]; then
+            echo "✅ $$TRIGGER_NAME succeeded. Waiting 90 seconds..."
             sleep 90
           else
-            echo "⚠️ $TRIGGER_NAME failed/cancelled. Waiting 30 seconds..."
+            echo "⚠️ $$TRIGGER_NAME failed/cancelled. Waiting 30 seconds..."
             sleep 30
           fi
         }
@@ -59,57 +59,57 @@ steps:
           PREV_TRIGGER_NAME=""
           PREV_BUILD_ID=""
 
-          for TRIGGER in "${WATCHED_TRIGGERS[@]}"; do
-            if [[ "$TRIGGER" == "$CURRENT_TRIGGER" ]]; then
+          for TRIGGER in "$${WATCHED_TRIGGERS[@]}"; do
+            if [[ "$$TRIGGER" == "$$CURRENT_TRIGGER" ]]; then
               continue
             fi
 
-            BUILD_INFO=$(gcloud builds list --region=asia-east1 \
-              --filter="status:(WORKING OR QUEUED) AND substitutions.TRIGGER_NAME=$TRIGGER" \
+            BUILD_INFO=$$(gcloud builds list --region=asia-east1 \
+              --filter="status:(WORKING OR QUEUED) AND substitutions.TRIGGER_NAME=$$TRIGGER" \
               --sort-by="~createTime" --limit=1 --format="value(id,createTime)")
 
-            if [[ -n "$BUILD_INFO" ]]; then
-              BUILD_START=$(echo "$BUILD_INFO" | awk '{print $2}')
-              if [[ "$BUILD_START" < "$CURRENT_START_TIME" ]]; then
-                PREV_RUNNING=$((PREV_RUNNING+1))
-                PREV_TRIGGER_NAME="$TRIGGER"
-                PREV_BUILD_ID=$(echo "$BUILD_INFO" | awk '{print $1}')
+            if [[ -n "$$BUILD_INFO" ]]; then
+              BUILD_START=$$(echo "$$BUILD_INFO" | awk '{print $$2}')
+              if [[ "$$BUILD_START" < "$$CURRENT_START_TIME" ]]; then
+                PREV_RUNNING=$$((PREV_RUNNING+1))
+                PREV_TRIGGER_NAME="$$TRIGGER"
+                PREV_BUILD_ID=$$(echo "$$BUILD_INFO" | awk '{print $$1}')
               fi
             fi
           done
 
-          if [[ $PREV_RUNNING -eq 0 ]]; then
+          if [[ $$PREV_RUNNING -eq 0 ]]; then
             echo "✅ No previous triggers running → skip wait and go to Step 2."
             break
-          elif [[ $PREV_RUNNING -eq 1 ]]; then
-            echo "⏳ One previous trigger ($PREV_TRIGGER_NAME) is running → wait for MIG VM from latest template..."
+          elif [[ $$PREV_RUNNING -eq 1 ]]; then
+            echo "⏳ One previous trigger ($$PREV_TRIGGER_NAME) is running → wait for MIG VM from latest template..."
             # Get latest template
-            LATEST_TEMPLATE=$(gcloud compute instance-groups managed list-instances $MIG_NAME \
-              --zone=$ZONE \
+            LATEST_TEMPLATE=$$(gcloud compute instance-groups managed list-instances $$MIG_NAME \
+              --zone=$$ZONE \
               --format="value(version.instanceTemplate.basename())" | sort | uniq | tail -n 1)
 
             # Wait for at least one VM from latest template to be ready
             while true; do
-              READY_VM=$(gcloud compute instance-groups managed list-instances $MIG_NAME \
-                  --zone=$ZONE \
+              READY_VM=$$(gcloud compute instance-groups managed list-instances $$MIG_NAME \
+                  --zone=$$ZONE \
                   --format="value(name,version.instanceTemplate.basename(),currentAction,healthState)" \
-                  | awk -v tmpl="$LATEST_TEMPLATE" '$2==tmpl && $3=="NONE" && $4=="HEALTHY" {print $1}' \
+                  | awk -v tmpl="$$LATEST_TEMPLATE" '$$2==tmpl && $$3=="NONE" && $$4=="HEALTHY" {print $$1}' \
                   | head -n1)
 
-              if [[ -n "$READY_VM" ]]; then
-                echo "✅ MIG VM $READY_VM from latest template is ready → proceed to Step 2."
+              if [[ -n "$$READY_VM" ]]; then
+                echo "✅ MIG VM $$READY_VM from latest template is ready → proceed to Step 2."
                 break 2
               fi
-              echo "⏱ Waiting for MIG VM from latest template ($LATEST_TEMPLATE) to be ready..."
+              echo "⏱ Waiting for MIG VM from latest template ($$LATEST_TEMPLATE) to be ready..."
               sleep 15
             done
           else
-            echo "⚠️ Found multiple previous triggers running ($PREV_RUNNING) → executing wait logic..."
-            wait_for_build "$PREV_TRIGGER_NAME" "$PREV_BUILD_ID"
+            echo "⚠️ Found multiple previous triggers running ($$PREV_RUNNING) → executing wait logic..."
+            wait_for_build "$$PREV_TRIGGER_NAME" "$$PREV_BUILD_ID"
             # After waiting for one previous trigger, loop will re-evaluate PREV_RUNNING
           fi
         done
-        
+
   # ==========================================
   # Step 2: Generate version tag
   # ==========================================
@@ -119,7 +119,7 @@ steps:
     args:
       - -c
       - |
-        VERSION_TAG="v-$(date +%Y%m%d-%H%M%S)"
+        VERSION_TAG="v-$$(date +%Y%m%d-%H%M%S)"
         echo "VERSION_TAG=$$VERSION_TAG" > /workspace/version.env
         echo "Generated version: $$VERSION_TAG"
 
@@ -130,7 +130,7 @@ steps:
     id: clone-repo
     args:
       - clone
-      - https://github.com/${_GITHUB_REPO}.git
+      - https://github.com/$${_GITHUB_REPO}.git
       - /workspace/app
 
   # ==========================================
@@ -173,13 +173,13 @@ steps:
       - |
         source /workspace/version.env
         echo "[MIG] Fetching MIG instance boot disk..."
-        VM_NAME=$(gcloud compute instance-groups managed list-instances ${_MIG_NAME} --zone ${_ZONE} --format="value(instance.basename())" | head -n 1)
-        BOOT_DISK=$(gcloud compute instances describe $$VM_NAME --zone=${_ZONE} --format="value(disks[0].source.basename())")
+        VM_NAME=$$(gcloud compute instance-groups managed list-instances $${_MIG_NAME} --zone $${_ZONE} --format="value(instance.basename())" | head -n 1)
+        BOOT_DISK=$$(gcloud compute instances describe $$VM_NAME --zone=$${_ZONE} --format="value(disks[0].source.basename())")
 
         echo "[IMAGE] Creating image from boot disk $$BOOT_DISK"
         gcloud compute images create backend-image-$$VERSION_TAG \
           --source-disk=$$BOOT_DISK \
-          --source-disk-zone=${_ZONE} \
+          --source-disk-zone=$${_ZONE} \
           --family=backend-family \
           --project=crested-polygon-472204-n5 \
           --force
@@ -204,7 +204,7 @@ steps:
           --scopes=https://www.googleapis.com/auth/cloud-platform \
           --metadata-from-file=startup-script=startup-script.sh \
           --network=default \
-          --subnet=default\
+          --subnet=default \
           --tags=http-server,https-server,lb-health-check \
           --region=asia-east1
 
@@ -220,18 +220,18 @@ steps:
         source /workspace/version.env
         echo "[MIG] Performing rolling update..."
         gcloud compute instance-groups managed rolling-action start-update \
-          ${_MIG_NAME} \
-          --zone=${_ZONE} \
+          $${_MIG_NAME} \
+          --zone=$${_ZONE} \
           --version "template=backend-template-$$VERSION_TAG" \
           --minimal-action=replace \
           --max-surge=1 \
-          --max-unavailable=1
+          --max-unavailable=0
         echo "[WAIT] Sleeping for 60 seconds before cleanup to let new VMs stabilize..."
         sleep 60
         echo "[CLEANUP] Deleting old instances (force)..."
-        OLD_INSTANCES=$(gcloud compute instance-groups managed list-instances ${_MIG_NAME} --zone=${_ZONE} --format="value(instance.basename())")
+        OLD_INSTANCES=$$(gcloud compute instance-groups managed list-instances $${_MIG_NAME} --zone=$${_ZONE} --format="value(instance.basename())")
         for VM in $$OLD_INSTANCES; do
-          gcloud compute instances delete $$VM --zone=${_ZONE} --quiet --delete-disks=all || true
+          gcloud compute instances delete $$VM --zone=$${_ZONE} --quiet --delete-disks=all || true
         done
 
 options:
@@ -240,4 +240,4 @@ substitutions:
   _TRIGGER_NAME: "trigger-2"
   _MIG_NAME: "vamsi-mig"
   _ZONE: "asia-east1-b"
-  _GITHUB_REPO: "20481A04K2/repo2"
+  _GITHUB_REPO: "20481A04K2/repo1"
