@@ -82,13 +82,30 @@ steps:
             echo "✅ No previous triggers running → skip wait and go to Step 2."
             break
           elif [[ $$PREV_RUNNING -eq 1 ]]; then
-            echo "⏳ One previous trigger ($$PREV_TRIGGER_NAME) is running → wait for MIG VM from latest template..."
-            # Get latest template
+            echo "⏳ One previous trigger ($$PREV_TRIGGER_NAME) is running → wait for MIG rolling update to start..."
+
+            # ✅ NEW LOGIC: Wait until MIG rolling update actually starts
+            while true; do
+              CURRENT_ACTIONS=$$(gcloud compute instance-groups managed list-instances $$MIG_NAME \
+                --zone=$$ZONE --format="value(currentAction)" | grep -v NONE || true)
+
+              if [[ -n "$$CURRENT_ACTIONS" ]]; then
+                echo "🔄 MIG rolling update detected, fetching latest template..."
+                break
+              fi
+
+              echo "⏱ Waiting for MIG rolling update to start..."
+              sleep 15
+            done
+
+            # Once rolling update started, get latest template being rolled out
             LATEST_TEMPLATE=$$(gcloud compute instance-groups managed list-instances $$MIG_NAME \
               --zone=$$ZONE \
               --format="value(version.instanceTemplate.basename())" | sort | uniq | tail -n 1)
 
-            # Wait for at least one VM from latest template to be ready
+            echo "ℹ️ Latest template being deployed: $$LATEST_TEMPLATE"
+
+            # Wait for at least one VM from this template to be healthy
             while true; do
               READY_VM=$$(gcloud compute instance-groups managed list-instances $$MIG_NAME \
                   --zone=$$ZONE \
@@ -97,16 +114,16 @@ steps:
                   | head -n1)
 
               if [[ -n "$$READY_VM" ]]; then
-                echo "✅ MIG VM $$READY_VM from latest template is ready → proceed to Step 2."
+                echo "✅ MIG VM $$READY_VM from rolling update template $$LATEST_TEMPLATE is healthy → proceed to Step 2."
                 break 2
               fi
-              echo "⏱ Waiting for MIG VM from latest template ($$LATEST_TEMPLATE) to be ready..."
+              echo "⏱ Waiting for MIG VM from template ($$LATEST_TEMPLATE) to be ready..."
               sleep 15
             done
           else
             echo "⚠️ Found multiple previous triggers running ($$PREV_RUNNING) → executing wait logic..."
             wait_for_build "$$PREV_TRIGGER_NAME" "$$PREV_BUILD_ID"
-            # After waiting for one previous trigger, loop will re-evaluate PREV_RUNNING
+            # After waiting, loop will re-evaluate PREV_RUNNING
           fi
         done
 
