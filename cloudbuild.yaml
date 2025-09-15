@@ -148,8 +148,8 @@ steps:
           --service-account=613125347481-compute@developer.gserviceaccount.com \
           --scopes=https://www.googleapis.com/auth/cloud-platform \
           --metadata-from-file=startup-script=startup-script.sh \
-          --network=crested-polygon-472204-n5 \
-          --subnet=singapore-subnet \
+          --network=default \
+          --subnet=default\
           --tags=http-server,https-server,lb-health-check \
           --region=asia-east1
 
