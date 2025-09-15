@@ -7,26 +7,28 @@ steps:
     args:
       - -c
       - |
-        echo "Checking current trigger against actively running triggers..."
+        echo "⏳ Checking current trigger against actively running triggers..."
 
-        WATCHED_TRIGGERS=("trigger-3" "trigger-1" )
+        WATCHED_TRIGGERS=("trigger-1" "trigger-3")
         CURRENT_TRIGGER="$${_TRIGGER_NAME:-trigger-2}"
-        echo "Current Trigger: $$CURRENT_TRIGGER"
+        echo "ℹ️ Current Trigger: $$CURRENT_TRIGGER"
 
+        # Get CURRENT build info - ONLY if it's still running or queued
         CURRENT_BUILD_INFO=$$(gcloud builds list --region=asia-east1 \
           --filter="status:(WORKING OR QUEUED) AND substitutions.TRIGGER_NAME=$$CURRENT_TRIGGER" \
           --sort-by="~createTime" --limit=1 \
           --format="value(id,createTime)")
         
         if [[ -z "$$CURRENT_BUILD_INFO" ]]; then
-          echo "No ongoing build found for $$CURRENT_TRIGGER (maybe already finished)."
+          echo "⚠️ No ongoing build found for $$CURRENT_TRIGGER (maybe already finished)."
           exit 0
         fi
 
         CURRENT_BUILD_ID=$$(echo "$$CURRENT_BUILD_INFO" | awk '{print $$1}')
         CURRENT_START_TIME=$$(echo "$$CURRENT_BUILD_INFO" | awk '{print $$2}')
-        echo "Current build $$CURRENT_BUILD_ID started at: $$CURRENT_START_TIME"
+        echo "⏰ Current build $$CURRENT_BUILD_ID started at: $$CURRENT_START_TIME"
 
+        # Check if this is earliest ongoing trigger
         SKIP_WAIT="true"
         for TRIGGER in "$${WATCHED_TRIGGERS[@]}"; do
           if [[ "$$TRIGGER" == "$$CURRENT_TRIGGER" ]]; then
@@ -40,20 +42,61 @@ steps:
             OTHER_START=$$(echo "$$LATEST_BUILD" | awk '{print $$2}')
             if [[ "$$OTHER_START" < "$$CURRENT_START_TIME" ]]; then
               SKIP_WAIT="false"
-              echo "$$TRIGGER is still running and started earlier at $$OTHER_START"
+              echo "⏳ $$TRIGGER is still running and started earlier at $$OTHER_START"
               break
             fi
           fi
         done
 
         if [[ "$$SKIP_WAIT" == "true" ]]; then
-          echo "No earlier running triggers found → skipping wait logic."
+          echo "✅ No earlier running triggers found → skipping wait logic."
           exit 0
         fi
 
-        echo "Found earlier running trigger(s) → waiting for them to finish..."
-        # Wait until older builds are done
-        # (same as your previous wait_for_build loop)
+        echo "⚠️ Found earlier running trigger(s) → waiting for them to finish..."
+
+        wait_for_build() {
+          local TRIGGER_NAME=$$1
+          local BUILD_ID=$$2
+          while true; do
+            STATUS=$$(gcloud builds describe $$BUILD_ID --region=asia-east1 --format="value(status)")
+            if [[ "$$STATUS" == "SUCCESS" || "$$STATUS" == "FAILURE" || "$$STATUS" == "CANCELLED" ]]; then
+              echo "🔹 $$TRIGGER_NAME build $$BUILD_ID finished with $$STATUS"
+              break
+            fi
+            echo "⏱ $$TRIGGER_NAME build $$BUILD_ID still running, waiting 15s..."
+            sleep 15
+          done
+          if [[ "$$STATUS" == "SUCCESS" ]]; then
+            echo "✅ $$TRIGGER_NAME succeeded. Waiting 90 seconds..."
+            sleep 90
+          else
+            echo "⚠️ $$TRIGGER_NAME failed/cancelled. Waiting 30 seconds..."
+            sleep 30
+          fi
+        }
+
+        # Wait for all earlier *running* triggers
+        for TRIGGER in "$${WATCHED_TRIGGERS[@]}"; do
+          if [[ "$$TRIGGER" == "$$CURRENT_TRIGGER" ]]; then
+            continue
+          fi
+          BUILD_INFO=$$(gcloud builds list --region=asia-east1 \
+            --filter="status:(WORKING OR QUEUED) AND substitutions.TRIGGER_NAME=$$TRIGGER" \
+            --sort-by="~createTime" --limit=1 \
+            --format="value(id,createTime)")
+          if [[ -z "$$BUILD_INFO" ]]; then
+            echo "ℹ️ No running build found for $$TRIGGER, skipping."
+            continue
+          fi
+          BUILD_ID=$$(echo "$$BUILD_INFO" | awk '{print $$1}')
+          BUILD_START=$$(echo "$$BUILD_INFO" | awk '{print $$2}')
+
+          if [[ "$$BUILD_START" < "$$CURRENT_START_TIME" ]]; then
+            wait_for_build "$$TRIGGER" "$$BUILD_ID"
+          fi
+        done
+
 
   # ==========================================
   # Step 2: Generate version tag
