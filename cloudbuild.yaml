@@ -110,7 +110,7 @@ steps:
               READY_VM=$$(gcloud compute instance-groups managed list-instances $$MIG_NAME \
                   --zone=$$ZONE \
                   --format="value(name,version.instanceTemplate.basename(),currentAction,healthState)" \
-                  | awk -v tmpl="$$LATEST_TEMPLATE" '$$2==tmpl && $$3=="NONE" && $$4=="HEALTHY" {print $$1}' \
+                  | awk -v tmpl="$$LATEST_TEMPLATE" '$$2==tmpl && $$3=="NONE" {print $$1}' \
                   | head -n1)
 
               if [[ -n "$$READY_VM" ]]; then
