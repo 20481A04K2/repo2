@@ -1,37 +1,38 @@
 steps:
+  # ==========================================
+  # Step 1: Wait logic for running triggers
+  # ==========================================
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: bash
     args:
       - -c
       - |
-        echo "⏳ Checking current trigger against actively running triggers..."
+        echo "Checking current trigger against actively running triggers..."
 
-        WATCHED_TRIGGERS=("trigger-1"  "trigger-3")
+        WATCHED_TRIGGERS=("trigger-2" "trigger-1" )
         CURRENT_TRIGGER="$${_TRIGGER_NAME:-trigger-2}"
-        echo "ℹ️ Current Trigger: $$CURRENT_TRIGGER"
+        echo "Current Trigger: $$CURRENT_TRIGGER"
 
-        # Get CURRENT build info - ONLY if it's still running or queued
-        CURRENT_BUILD_INFO=$$(gcloud builds list --region=asia-south1 \
+        CURRENT_BUILD_INFO=$$(gcloud builds list --region=asia-east1 \
           --filter="status:(WORKING OR QUEUED) AND substitutions.TRIGGER_NAME=$$CURRENT_TRIGGER" \
           --sort-by="~createTime" --limit=1 \
           --format="value(id,createTime)")
         
         if [[ -z "$$CURRENT_BUILD_INFO" ]]; then
-          echo "⚠️ No ongoing build found for $$CURRENT_TRIGGER (maybe already finished)."
+          echo "No ongoing build found for $$CURRENT_TRIGGER (maybe already finished)."
           exit 0
         fi
 
         CURRENT_BUILD_ID=$$(echo "$$CURRENT_BUILD_INFO" | awk '{print $$1}')
         CURRENT_START_TIME=$$(echo "$$CURRENT_BUILD_INFO" | awk '{print $$2}')
-        echo "⏰ Current build $$CURRENT_BUILD_ID started at: $$CURRENT_START_TIME"
+        echo "Current build $$CURRENT_BUILD_ID started at: $$CURRENT_START_TIME"
 
-        # Check if this is earliest ongoing trigger
         SKIP_WAIT="true"
         for TRIGGER in "$${WATCHED_TRIGGERS[@]}"; do
           if [[ "$$TRIGGER" == "$$CURRENT_TRIGGER" ]]; then
             continue
           fi
-          LATEST_BUILD=$$(gcloud builds list --region=asia-south1 \
+          LATEST_BUILD=$$(gcloud builds list --region=asia-east1 \
             --filter="status:(WORKING OR QUEUED) AND substitutions.TRIGGER_NAME=$$TRIGGER" \
             --sort-by="~createTime" --limit=1 \
             --format="value(id,createTime)")
@@ -39,73 +40,148 @@ steps:
             OTHER_START=$$(echo "$$LATEST_BUILD" | awk '{print $$2}')
             if [[ "$$OTHER_START" < "$$CURRENT_START_TIME" ]]; then
               SKIP_WAIT="false"
-              echo "⏳ $$TRIGGER is still running and started earlier at $$OTHER_START"
+              echo "$$TRIGGER is still running and started earlier at $$OTHER_START"
               break
             fi
           fi
         done
 
         if [[ "$$SKIP_WAIT" == "true" ]]; then
-          echo "✅ No earlier running triggers found → skipping wait logic."
+          echo "No earlier running triggers found → skipping wait logic."
           exit 0
         fi
 
-        echo "⚠️ Found earlier running trigger(s) → waiting for them to finish..."
+        echo "Found earlier running trigger(s) → waiting for them to finish..."
+        # Wait until older builds are done
+        # (same as your previous wait_for_build loop)
 
-        wait_for_build() {
-          local TRIGGER_NAME=$$1
-          local BUILD_ID=$$2
-          while true; do
-            STATUS=$$(gcloud builds describe $$BUILD_ID --region=asia-south1 --format="value(status)")
-            if [[ "$$STATUS" == "SUCCESS" || "$$STATUS" == "FAILURE" || "$$STATUS" == "CANCELLED" ]]; then
-              echo "🔹 $$TRIGGER_NAME build $$BUILD_ID finished with $$STATUS"
-              break
-            fi
-            echo "⏱ $$TRIGGER_NAME build $$BUILD_ID still running, waiting 15s..."
-            sleep 15
-          done
-          if [[ "$$STATUS" == "SUCCESS" ]]; then
-            echo "✅ $$TRIGGER_NAME succeeded. Waiting 90 seconds..."
-            sleep 90
-          else
-            echo "⚠️ $$TRIGGER_NAME failed/cancelled. Waiting 30 seconds..."
-            sleep 30
-          fi
-        }
+  # ==========================================
+  # Step 2: Generate version tag
+  # ==========================================
+  - name: gcr.io/cloud-builders/gcloud
+    id: generate-version
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        VERSION_TAG="v-$(date +%Y%m%d-%H%M%S)"
+        echo "VERSION_TAG=$$VERSION_TAG" > /workspace/version.env
+        echo "Generated version: $$VERSION_TAG"
 
-        # Wait for all earlier *running* triggers
-        for TRIGGER in "$${WATCHED_TRIGGERS[@]}"; do
-          if [[ "$$TRIGGER" == "$$CURRENT_TRIGGER" ]]; then
-            continue
-          fi
-          BUILD_INFO=$$(gcloud builds list --region=asia-south1 \
-            --filter="status:(WORKING OR QUEUED) AND substitutions.TRIGGER_NAME=$$TRIGGER" \
-            --sort-by="~createTime" --limit=1 \
-            --format="value(id,createTime)")
-          if [[ -z "$$BUILD_INFO" ]]; then
-            echo "ℹ️ No running build found for $$TRIGGER, skipping."
-            continue
-          fi
-          BUILD_ID=$$(echo "$$BUILD_INFO" | awk '{print $$1}')
-          BUILD_START=$$(echo "$$BUILD_INFO" | awk '{print $$2}')
+  # ==========================================
+  # Step 3: Clone GitHub repo & unzip
+  # ==========================================
+  - name: gcr.io/cloud-builders/git
+    id: clone-repo
+    args:
+      - clone
+      - https://github.com/${_GITHUB_REPO}.git
+      - /workspace/app
 
-          if [[ "$$BUILD_START" < "$$CURRENT_START_TIME" ]]; then
-            wait_for_build "$$TRIGGER" "$$BUILD_ID"
-          fi
+  # ==========================================
+  # Step 4: Write startup script to run Flask app
+  # ==========================================
+  - name: gcr.io/cloud-builders/gcloud
+    id: write-startup-script
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        echo "[SCRIPT] Writing startup script..."
+        cat << 'EOF' > startup-script.sh
+        #!/bin/bash
+        set -e
+
+        echo "Installing Python and dependencies..."
+        sudo apt-get update -y
+        sudo apt-get install -y python3 python3-pip unzip
+
+        cd /home/ubuntu
+        mkdir -p flask-app
+        cp /workspace/app/* flask-app/
+
+        echo "Installing Flask..."
+        pip3 install flask
+
+        echo "Starting Flask app..."
+        nohup python3 flask-app/app.py > flask.log 2>&1 &
+        EOF
+
+  # ==========================================
+  # Step 5: Create image from MIG VM
+  # ==========================================
+  - name: gcr.io/cloud-builders/gcloud
+    id: create-image
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        source /workspace/version.env
+        echo "[MIG] Fetching MIG instance boot disk..."
+        VM_NAME=$(gcloud compute instance-groups managed list-instances ${_MIG_NAME} --zone ${_ZONE} --format="value(instance.basename())" | head -n 1)
+        BOOT_DISK=$(gcloud compute instances describe $$VM_NAME --zone=${_ZONE} --format="value(disks[0].source.basename())")
+
+        echo "[IMAGE] Creating image from boot disk $$BOOT_DISK"
+        gcloud compute images create backend-image-$$VERSION_TAG \
+          --source-disk=$$BOOT_DISK \
+          --source-disk-zone=${_ZONE} \
+          --family=backend-family \
+          --project=crested-polygon-472204-n5 \
+          --force
+
+  # ==========================================
+  # Step 6: Create instance template
+  # ==========================================
+  - name: gcr.io/cloud-builders/gcloud
+    id: create-template
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        source /workspace/version.env
+        echo "[GCE] Creating instance template..."
+        gcloud compute instance-templates create backend-template-$$VERSION_TAG \
+          --project=crested-polygon-472204-n5 \
+          --machine-type=n2-standard-2 \
+          --image=backend-image-$$VERSION_TAG \
+          --image-project=crested-polygon-472204-n5 \
+          --service-account=613125347481-compute@developer.gserviceaccount.com \
+          --scopes=https://www.googleapis.com/auth/cloud-platform \
+          --metadata-from-file=startup-script=startup-script.sh \
+          --network=crested-polygon-472204-n5 \
+          --subnet=singapore-subnet \
+          --tags=http-server,https-server,lb-health-check \
+          --region=asia-east1
+
+  # ==========================================
+  # Step 7: Rolling update MIG + delete old VMs
+  # ==========================================
+  - name: gcr.io/cloud-builders/gcloud
+    id: update-mig
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        source /workspace/version.env
+        echo "[MIG] Performing rolling update..."
+        gcloud compute instance-groups managed rolling-action start-update \
+          ${_MIG_NAME} \
+          --zone=${_ZONE} \
+          --version "template=backend-template-$$VERSION_TAG" \
+          --minimal-action=replace \
+          --max-surge=1 \
+          --max-unavailable=0
+
+        echo "[CLEANUP] Deleting old instances (force)..."
+        OLD_INSTANCES=$(gcloud compute instance-groups managed list-instances ${_MIG_NAME} --zone=${_ZONE} --format="value(instance.basename())")
+        for VM in $$OLD_INSTANCES; do
+          gcloud compute instances delete $$VM --zone=${_ZONE} --quiet --delete-disks=all || true
         done
 
-
-  - name: 'gcr.io/cloud-builders/docker'
-    args:
-      ['build', '-t', 'asia-south1-docker.pkg.dev/divine-course-470809-f6/deploy-to-cloudrun/cloudrun-app:latest', '.']
-
-  - name: 'gcr.io/cloud-builders/docker'
-    args:
-      ['push', 'asia-south1-docker.pkg.dev/divine-course-470809-f6/deploy-to-cloudrun/cloudrun-app:latest']
-
-timeout: 1200s
 options:
   logging: CLOUD_LOGGING_ONLY
 substitutions:
   _TRIGGER_NAME: "trigger-2"
-  
+  _MIG_NAME: "vamsi-mig"
+  _ZONE: "asia-east1"
+  _GITHUB_REPO: "https://github.com/20481A04K2/repo2.git"
