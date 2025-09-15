@@ -130,7 +130,7 @@ steps:
     id: clone-repo
     args:
       - clone
-      - https://github.com/$${_GITHUB_REPO}.git
+      - https://github.com/${_GITHUB_REPO}.git
       - /workspace/app
 
   # ==========================================
