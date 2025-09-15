@@ -213,7 +213,7 @@ steps:
           --version "template=backend-template-$$VERSION_TAG" \
           --minimal-action=replace \
           --max-surge=1 \
-          --max-unavailable=2
+          --max-unavailable=1
 
         echo "[CLEANUP] Deleting old instances (force)..."
         OLD_INSTANCES=$(gcloud compute instance-groups managed list-instances ${_MIG_NAME} --zone=${_ZONE} --format="value(instance.basename())")
