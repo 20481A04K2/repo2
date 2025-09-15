@@ -214,7 +214,8 @@ steps:
           --minimal-action=replace \
           --max-surge=1 \
           --max-unavailable=1
-
+        echo "[WAIT] Sleeping for 60 seconds before cleanup to let new VMs stabilize..."
+        sleep 60
         echo "[CLEANUP] Deleting old instances (force)..."
         OLD_INSTANCES=$(gcloud compute instance-groups managed list-instances ${_MIG_NAME} --zone=${_ZONE} --format="value(instance.basename())")
         for VM in $$OLD_INSTANCES; do
