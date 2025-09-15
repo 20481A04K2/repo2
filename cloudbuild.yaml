@@ -9,7 +9,7 @@ steps:
       - |
         echo "Checking current trigger against actively running triggers..."
 
-        WATCHED_TRIGGERS=("trigger-2" "trigger-1" )
+        WATCHED_TRIGGERS=("trigger-3" "trigger-1" )
         CURRENT_TRIGGER="$${_TRIGGER_NAME:-trigger-2}"
         echo "Current Trigger: $$CURRENT_TRIGGER"
 
@@ -183,5 +183,5 @@ options:
 substitutions:
   _TRIGGER_NAME: "trigger-2"
   _MIG_NAME: "vamsi-mig"
-  _ZONE: "asia-east1"
+  _ZONE: "asia-east1-b"
   _GITHUB_REPO: "20481A04K2/repo2"
