@@ -237,7 +237,7 @@ steps:
 options:
   logging: CLOUD_LOGGING_ONLY
 substitutions:
-  _TRIGGER_NAME: "trigger-1"
+  _TRIGGER_NAME: "trigger-2"
   _MIG_NAME: "vamsi-mig"
   _ZONE: "asia-east1-b"
-  _GITHUB_REPO: "20481A04K2/repo1"
+  _GITHUB_REPO: "20481A04K2/repo2"
