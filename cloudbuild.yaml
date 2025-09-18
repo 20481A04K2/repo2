@@ -31,7 +31,7 @@ steps:
 
         echo "⏰ Current build $$CURRENT_BUILD_ID started at: $$CURRENT_START_TIME"
         # Store current trigger & start time & watched triggers for Step 4.5
-        echo "$CURRENT_TRIGGER|$CURRENT_START_TIME|${_WATCHED_TRIGGERS}" > /workspace/trigger-info.txt
+        echo "$$CURRENT_TRIGGER|$$CURRENT_START_TIME|$${_WATCHED_TRIGGERS}" > /workspace/trigger-info.txt
          
         # Function to wait for a build to finish
         wait_for_build() {
@@ -234,9 +234,9 @@ steps:
 
           if [[ -n "$$BUILD_INFO" ]]; then
             PREV_FOUND=1
-            BUILD_ID=$(echo "$$BUILD_INFO" | awk '{print $$1}')
-            STATUS=$(echo "$$BUILD_INFO" | awk '{print $$2}')
-            echo "⏳ Found watched build $$BUILD_ID from $$TRIGGER with status $STATUS"
+            BUILD_ID=$$(echo "$$BUILD_INFO" | awk '{print $$1}')
+            STATUS=$$(echo "$$BUILD_INFO" | awk '{print $$2}')
+            echo "⏳ Found watched build $$BUILD_ID from $$TRIGGER with status $$STATUS"
 
             if [[ "$$STATUS" == "WORKING" || "$$STATUS" == "QUEUED" ]]; then
               echo "⏳ Waiting for $$TRIGGER build $$BUILD_ID to finish..."
