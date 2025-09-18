@@ -9,7 +9,7 @@ steps:
       - |
         echo "⏳ Checking ongoing triggers and MIG VM readiness..."
 
-        WATCHED_TRIGGERS=("trigger-1" "trigger-3")
+         WATCHED_TRIGGERS="$${_WATCHED_TRIGGER_NAMES: trigger-1,trigger-3,trigger-4}"
         CURRENT_TRIGGER="$${_TRIGGER_NAME:-trigger-2}"
         MIG_NAME="vamsi-mig"
         ZONE="asia-east1-b"
@@ -30,7 +30,9 @@ steps:
         CURRENT_START_TIME=$$(echo "$$CURRENT_BUILD_INFO" | awk '{print $$2}')
 
         echo "⏰ Current build $$CURRENT_BUILD_ID started at: $$CURRENT_START_TIME"
-
+        # Store current trigger & start time & watched triggers for Step 4.5
+        echo "$CURRENT_TRIGGER|$CURRENT_START_TIME|${_WATCHED_TRIGGERS}" > /workspace/trigger-info.txt
+         
         # Function to wait for a build to finish
         wait_for_build() {
           local TRIGGER_NAME=$$1
@@ -199,7 +201,7 @@ steps:
         EOF
 
   # ==========================================
-  # Step 4.5: Wait for previous trigger (if any) before image creation
+  # Step 4.5: Wait for watched triggers after Step 1
   # ==========================================
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     id: wait-before-image
@@ -207,69 +209,55 @@ steps:
     args:
       - -c
       - |
-        echo "⏳ Checking for previous running triggers before image creation..."
-        WATCHED_TRIGGERS=("trigger-1" "trigger-3")   # Triggers to watch
-        CURRENT_TRIGGER="$${_TRIGGER_NAME:-trigger-2}"
+        echo "⏳ Checking watched triggers before image creation..."
 
-        # Get current trigger start time
-        CURRENT_BUILD_INFO=$$(gcloud builds list --region=asia-east1 \
-          --filter="substitutions.TRIGGER_NAME=$$CURRENT_TRIGGER" \
-          --sort-by="~createTime" --limit=1 --format="value(id,createTime)")
-
-        if [[ -z "$$CURRENT_BUILD_INFO" ]]; then
-          echo "✅ No current build found, proceeding with image creation."
+        if [[ ! -f /workspace/trigger-info.txt ]]; then
+          echo "⚠️ No trigger info found from Step 1 — proceeding with image creation."
           exit 0
         fi
 
-        CURRENT_BUILD_ID=$$(echo "$$CURRENT_BUILD_INFO" | awk '{print $$1}')
-        CURRENT_START_TIME=$$(echo "$$CURRENT_BUILD_INFO" | awk '{print $$2}')
-        CURRENT_EPOCH=$$(date -u -d "$$CURRENT_START_TIME" +%s)
+        INFO=$$(cat /workspace/trigger-info.txt)
+        CURRENT_TRIGGER=$$(echo "$$INFO" | cut -d '|' -f 1)
+        CURRENT_START_TIME=$$(echo "$$INFO" | cut -d '|' -f 2)
+        IFS=',' read -r -a WATCHED_TRIGGERS <<< "$$(echo "$$INFO" | cut -d '|' -f 3)"
 
-        PREV_BUILD_ID=""
-        PREV_TRIGGER=""
+        echo "ℹ️ Current Trigger: $$CURRENT_TRIGGER"
+        echo "ℹ️ Current Build Start Time: $$CURRENT_START_TIME"
+        echo "ℹ️ Watched Triggers: $${WATCHED_TRIGGERS[*]}"
 
-        # Check for earlier builds
+        PREV_FOUND=0
+
         for TRIGGER in "$${WATCHED_TRIGGERS[@]}"; do
-          if [[ "$$TRIGGER" == "$$CURRENT_TRIGGER" ]]; then
-            continue
-          fi
-
           BUILD_INFO=$$(gcloud builds list --region=asia-east1 \
-            --filter="substitutions.TRIGGER_NAME=$$TRIGGER" \
-            --sort-by="~createTime" --limit=1 --format="value(id,createTime)")
+            --filter="substitutions.TRIGGER_NAME=$$TRIGGER AND createTime>=$$CURRENT_START_TIME" \
+            --sort-by="~createTime" --limit=1 --format="value(id,status)")
 
           if [[ -n "$$BUILD_INFO" ]]; then
-            BUILD_ID=$$(echo "$$BUILD_INFO" | awk '{print $$1}')
-            BUILD_START=$$(echo "$$BUILD_INFO" | awk '{print $$2}')
-            BUILD_EPOCH=$$(date -u -d "$$BUILD_START" +%s)
+            PREV_FOUND=1
+            BUILD_ID=$(echo "$$BUILD_INFO" | awk '{print $$1}')
+            STATUS=$(echo "$$BUILD_INFO" | awk '{print $$2}')
+            echo "⏳ Found watched build $$BUILD_ID from $$TRIGGER with status $STATUS"
 
-            if [[ $$BUILD_EPOCH -lt $$CURRENT_EPOCH ]]; then
-              PREV_BUILD_ID=$$BUILD_ID
-              PREV_TRIGGER=$$TRIGGER
-              echo "⏳ Found previous build $$PREV_BUILD_ID from $$PREV_TRIGGER started at $$BUILD_START"
-              break
+            if [[ "$$STATUS" == "WORKING" || "$$STATUS" == "QUEUED" ]]; then
+              echo "⏳ Waiting for $$TRIGGER build $$BUILD_ID to finish..."
+              while true; do
+                STATUS=$$(gcloud builds describe $$BUILD_ID --region=asia-east1 --format="value(status)")
+                if [[ "$$STATUS" == "SUCCESS" || "$$STATUS" == "FAILURE" || "$$STATUS" == "CANCELLED" ]]; then
+                  echo "🔹 $$TRIGGER build $$BUILD_ID finished with $$STATUS → proceed."
+                  break
+                fi
+                echo "⏱ Still running... waiting 15s"
+                sleep 15
+              done
             fi
           fi
         done
 
-        if [[ -z "$$PREV_BUILD_ID" ]]; then
-          echo "✅ No previous trigger builds to wait for — proceeding with image creation."
-          exit 0
+        if [[ $$PREV_FOUND -eq 0 ]]; then
+          echo "✅ No watched triggers started after current build — skipping wait."
         fi
 
-        # Wait for that previous build to finish
-        echo "⏳ Waiting for previous build $$PREV_BUILD_ID ($$PREV_TRIGGER) to finish..."
-        while true; do
-          STATUS=$$(gcloud builds describe $$PREV_BUILD_ID --region=asia-east1 --format="value(status)")
-          if [[ "$$STATUS" == "SUCCESS" || "$$STATUS" == "FAILURE" || "$$STATUS" == "CANCELLED" ]]; then
-            echo "🔹 Previous build $$PREV_BUILD_ID finished with status $$STATUS"
-            break
-          fi
-          echo "⏱ Previous build $$PREV_BUILD_ID still running, waiting 15s..."
-          sleep 15
-        done
 
-        echo "✅ Previous build completed — proceeding with image creation."
   # ==========================================
   # Step 5: Create image from MIG VM
   # ==========================================
@@ -415,6 +403,7 @@ options:
   logging: CLOUD_LOGGING_ONLY
 substitutions:
   _TRIGGER_NAME: "trigger-2"
+  _WATCHED_TRIGGER_NAMES: "trigger-2,trigger-3,trigger-4"
   _MIG_NAME: "vamsi-mig"
   _ZONE: "asia-east1-b"
   _GITHUB_REPO: "20481A04K2/repo2"
