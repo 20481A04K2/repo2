@@ -9,7 +9,7 @@ steps:
       - |
         echo "⏳ Checking ongoing triggers and MIG VM readiness..."
 
-        WATCHED_TRIGGERS="$${_WATCHED_TRIGGER_NAMES: trigger-1,trigger-3,trigger-4}"
+        IFS=',' read -ra WATCHED_TRIGGERS <<< "$${_WATCHED_TRIGGER_NAMES}"
         CURRENT_TRIGGER="$${_TRIGGER_NAME:-trigger-2}"
         MIG_NAME="vamsi-mig"
         ZONE="asia-east1-b"
@@ -88,6 +88,7 @@ steps:
           elif [[ $$PREV_RUNNING -eq 1 ]]; then
             echo "⏳ One previous trigger ($$PREV_TRIGGER_NAME) is running → wait for MIG rolling update to start..."
             # Append previous trigger info to trigger-info.txt
+            PREV_BUILD_TIME=$$(echo "$$BUILD_INFO" | awk '{print $$2}')
             echo "$$PREV_TRIGGER_NAME|$$PREV_BUILD_TIME" >> /workspace/trigger-info.txt
             echo "📄 Updated trigger-info.txt with previous trigger info:"
             cat /workspace/trigger-info.txt
