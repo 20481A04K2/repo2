@@ -9,7 +9,7 @@ steps:
       - |
         echo "⏳ Checking ongoing triggers and MIG VM readiness..."
 
-        IFS=',' read -ra WATCHED_TRIGGERS <<< "$${_WATCHED_TRIGGER_NAMES}"
+        WATCHED_TRIGGERS=("trigger-1" "trigger-3")
         CURRENT_TRIGGER="$${_TRIGGER_NAME:-trigger-2}"
         MIG_NAME="vamsi-mig"
         ZONE="asia-east1-b"
@@ -32,9 +32,6 @@ steps:
         echo "⏰ Current build $$CURRENT_BUILD_ID started at: $$CURRENT_START_TIME"
         # Initialize trigger-info.txt with current trigger info only
         echo "$$CURRENT_TRIGGER|$$CURRENT_START_TIME" > /workspace/trigger-info.txt
-        echo "✅ Initial trigger-info.txt content:"
-        cat /workspace/trigger-info.txt
-
         # Function to wait for a build to finish
         wait_for_build() {
           local TRIGGER_NAME=$$1
@@ -87,11 +84,6 @@ steps:
             break
           elif [[ $$PREV_RUNNING -eq 1 ]]; then
             echo "⏳ One previous trigger ($$PREV_TRIGGER_NAME) is running → wait for MIG rolling update to start..."
-            # Append previous trigger info to trigger-info.txt
-            PREV_BUILD_TIME=$$(echo "$$BUILD_INFO" | awk '{print $$2}')
-            echo "$$PREV_TRIGGER_NAME|$$PREV_BUILD_TIME" >> /workspace/trigger-info.txt
-            echo "📄 Updated trigger-info.txt with previous trigger info:"
-            cat /workspace/trigger-info.txt
 
             # ✅ NEW LOGIC: Wait until MIG rolling update actually starts
             while true; do
@@ -135,6 +127,7 @@ steps:
             # After waiting, loop will re-evaluate PREV_RUNNING
           fi
         done
+
 
 
   # ==========================================
@@ -207,50 +200,63 @@ steps:
         fi
         EOF
   # ==========================================
+  # Step 4.5: Wait for previous trigger (if any) before image creation
+  # ==========================================
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     id: wait-before-image
     entrypoint: bash
     args:
       - -c
       - |
-        echo "⏳ Checking watched triggers before proceeding..."
+        echo "⏳ Checking for previous running triggers before image creation..."
+        WATCHED_TRIGGERS=("trigger-1" "trigger-3")
+        CURRENT_TRIGGER="$${_TRIGGER_NAME:-trigger-2}"
 
-        if [[ ! -f /workspace/trigger-info.txt ]]; then
-          echo "⚠️ No trigger info found from Step 1 — proceeding without wait."
+        PREV_BUILD_ID=""
+        PREV_TRIGGER=""
+        CURRENT_START_TIME=$$(date -u +"%Y-%m-%dT%H:%M:%S")
+
+        for TRIGGER in "$${WATCHED_TRIGGERS[@]}"; do
+          if [[ "$$TRIGGER" == "$$CURRENT_TRIGGER" ]]; then
+            continue
+          fi
+
+          BUILD_INFO=$$(gcloud builds list --region=asia-east1 \
+            --filter="status:(WORKING OR QUEUED OR SUCCESS OR FAILURE OR CANCELLED) AND substitutions.TRIGGER_NAME=$$TRIGGER" \
+            --sort-by="~createTime" --limit=1 \
+            --format="value(id,createTime)")
+
+          if [[ -n "$$BUILD_INFO" ]]; then
+            BUILD_ID=$$(echo "$$BUILD_INFO" | awk '{print $$1}')
+            BUILD_START=$$(echo "$$BUILD_INFO" | awk '{print $$2}')
+            if [[ "$$BUILD_START" < "$$CURRENT_START_TIME" ]]; then
+              PREV_BUILD_ID=$$BUILD_ID
+              PREV_TRIGGER=$$TRIGGER
+              echo "⏳ Found previous build $$PREV_BUILD_ID from $$PREV_TRIGGER started at $$BUILD_START"
+              break
+            fi
+          fi
+        done
+
+        if [[ -z "$$PREV_BUILD_ID" ]]; then
+          echo "✅ No previous trigger builds to wait for — proceeding with image creation."
           exit 0
         fi
 
-        echo "📄 trigger-info.txt content:"
-        cat /workspace/trigger-info.txt
+        echo "⏳ Waiting for previous build $$PREV_BUILD_ID ($$PREV_TRIGGER) to finish..."
+        while true; do
+          STATUS=$$(gcloud builds describe $$PREV_BUILD_ID --region=asia-east1 --format="value(status)")
+          if [[ "$$STATUS" == "SUCCESS" || "$$STATUS" == "FAILURE" || "$$STATUS" == "CANCELLED" ]]; then
+            echo "🔹 Previous build $$PREV_BUILD_ID finished with status $$STATUS"
+            break
+          fi
+          echo "⏱ Previous build $$PREV_BUILD_ID still running, waiting 15s..."
+          sleep 15
+        done
 
-        CURRENT_TRIGGER=$$(head -n 1 /workspace/trigger-info.txt | cut -d '|' -f 1)
-        CURRENT_START=$$(head -n 1 /workspace/trigger-info.txt | cut -d '|' -f 2)
-        PREV_TRIGGER=$$(tail -n 1 /workspace/trigger-info.txt | cut -d '|' -f 1)
-        PREV_START=$$(tail -n 1 /workspace/trigger-info.txt | cut -d '|' -f 2)
+        echo "✅ Previous build completed — proceeding with image creation."
 
-        echo "ℹ️ Current Trigger: $$CURRENT_TRIGGER (started $$CURRENT_START)"
-        if [[ "$$PREV_TRIGGER" != "$$CURRENT_TRIGGER" ]]; then
-          echo "ℹ️ Previous Trigger: $$PREV_TRIGGER (started $$PREV_START)"
-        fi
 
-        if [[ -n "$$PREV_START" && "$$PREV_START" > "$$CURRENT_START" ]]; then
-          echo "⏳ Waiting for previous trigger $$PREV_TRIGGER to finish..."
-          while true; do
-            STATUS=$$(gcloud builds list \
-              --filter="substitutions.TRIGGER_NAME=$$PREV_TRIGGER" \
-              --sort-by="~startTime" --limit=1 \
-              --format="value(status)" || echo "")
-            echo "   → Current status: $$STATUS"
-            if [[ "$$STATUS" == "SUCCESS" || "$$STATUS" == "FAILURE" || "$$STATUS" == "CANCELLED" ]]; then
-              echo "✅ Previous trigger $$PREV_TRIGGER finished with $$STATUS → continue."
-              break
-            fi
-            echo "⏱ Waiting 20s before re-check..."
-            sleep 20
-          done
-        else
-          echo "✅ No later previous trigger detected — proceed."
-        fi
 
   # ==========================================
   # Step 5: Create image from MIG VM
@@ -397,7 +403,6 @@ options:
   logging: CLOUD_LOGGING_ONLY
 substitutions:
   _TRIGGER_NAME: "trigger-2"
-  _WATCHED_TRIGGER_NAMES: "trigger-1,trigger-3,trigger-4"
   _MIG_NAME: "vamsi-mig"
   _ZONE: "asia-east1-b"
   _GITHUB_REPO: "20481A04K2/repo2"
