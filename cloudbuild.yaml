@@ -214,7 +214,7 @@ steps:
 
         PREV_BUILD_ID=""
         PREV_TRIGGER=""
-        CURRENT_START_TIME=$$(date -u +"%Y-%m-%dT%H:%M:%S")
+        CURRENT_START_TIME=$$(head -n 1 /workspace/trigger-info.txt | cut -d '|' -f2)
 
         for TRIGGER in "$${WATCHED_TRIGGERS[@]}"; do
           if [[ "$$TRIGGER" == "$$CURRENT_TRIGGER" ]]; then
