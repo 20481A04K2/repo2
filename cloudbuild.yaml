@@ -115,7 +115,12 @@ steps:
                   | head -n1)
 
               if [[ -n "$$READY_VM" ]]; then
-                echo "✅ MIG VM $$READY_VM from rolling update template $$LATEST_TEMPLATE is healthy → proceed to Step 2."
+                echo "✅ MIG VM $$READY_VM from rolling update template $$LATEST_TEMPLATE is healthy."
+
+                echo "⏳ Now waiting for previous trigger ($$PREV_TRIGGER_NAME) build $$PREV_BUILD_ID to complete..."
+                wait_for_build "$$PREV_TRIGGER_NAME" "$$PREV_BUILD_ID"
+
+                echo "✅ Previous trigger ($$PREV_TRIGGER_NAME) completed → proceed to Step 2."
                 break 2
               fi
               echo "⏱ Waiting for MIG VM from template ($$LATEST_TEMPLATE) to be ready..."
@@ -199,64 +204,7 @@ steps:
           exit 1
         fi
         EOF
-  # ==========================================
-  # Step 4.5: Wait for previous trigger (if any) before image creation
-  # ==========================================
-  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
-    id: wait-before-image
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        echo "⏳ Checking for previous running triggers before image creation..."
-        WATCHED_TRIGGERS=("trigger-1" "trigger-3")
-        CURRENT_TRIGGER="$${_TRIGGER_NAME:-trigger-2}"
-
-        PREV_BUILD_ID=""
-        PREV_TRIGGER=""
-        CURRENT_START_TIME=$$(head -n 1 /workspace/trigger-info.txt | cut -d '|' -f2)
-
-        for TRIGGER in "$${WATCHED_TRIGGERS[@]}"; do
-          if [[ "$$TRIGGER" == "$$CURRENT_TRIGGER" ]]; then
-            continue
-          fi
-
-          BUILD_INFO=$$(gcloud builds list --region=asia-east1 \
-            --filter="status:(WORKING OR QUEUED OR SUCCESS OR FAILURE OR CANCELLED) AND substitutions.TRIGGER_NAME=$$TRIGGER" \
-            --sort-by="~createTime" --limit=1 \
-            --format="value(id,createTime)")
-
-          if [[ -n "$$BUILD_INFO" ]]; then
-            BUILD_ID=$$(echo "$$BUILD_INFO" | awk '{print $$1}')
-            BUILD_START=$$(echo "$$BUILD_INFO" | awk '{print $$2}')
-            if [[ "$$BUILD_START" < "$$CURRENT_START_TIME" ]]; then
-              PREV_BUILD_ID=$$BUILD_ID
-              PREV_TRIGGER=$$TRIGGER
-              echo "⏳ Found previous build $$PREV_BUILD_ID from $$PREV_TRIGGER started at $$BUILD_START"
-              break
-            fi
-          fi
-        done
-
-        if [[ -z "$$PREV_BUILD_ID" ]]; then
-          echo "✅ No previous trigger builds to wait for — proceeding with image creation."
-          exit 0
-        fi
-
-        echo "⏳ Waiting for previous build $$PREV_BUILD_ID ($$PREV_TRIGGER) to finish..."
-        while true; do
-          STATUS=$$(gcloud builds describe $$PREV_BUILD_ID --region=asia-east1 --format="value(status)")
-          if [[ "$$STATUS" == "SUCCESS" || "$$STATUS" == "FAILURE" || "$$STATUS" == "CANCELLED" ]]; then
-            echo "🔹 Previous build $$PREV_BUILD_ID finished with status $$STATUS"
-            break
-          fi
-          echo "⏱ Previous build $$PREV_BUILD_ID still running, waiting 15s..."
-          sleep 15
-        done
-
-        echo "✅ Previous build completed — proceeding with image creation."
-
-
+  
 
   # ==========================================
   # Step 5: Create image from MIG VM
