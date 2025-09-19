@@ -1,5 +1,77 @@
 steps:
+
+
+
   # ==========================================
+  # Step 2: Generate version tag
+  # ==========================================
+  - name: gcr.io/cloud-builders/gcloud
+    id: generate-version
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        VERSION_TAG="v-$(date +%Y%m%d-%H%M%S)"
+        echo "VERSION_TAG=$$VERSION_TAG" > /workspace/version.env
+        echo "Generated version: $$VERSION_TAG"
+
+  # ==========================================
+  # Step 3: Clone GitHub repo & unzip
+  # ==========================================
+  - name: gcr.io/cloud-builders/git
+    id: clone-repo
+    args:
+      - clone
+      - https://github.com/${_GITHUB_REPO}.git
+      - /workspace/app
+
+  # ==========================================
+  # Step 4: Write startup script to run Flask app
+  # ==========================================
+  - name: gcr.io/cloud-builders/gcloud
+    id: write-startup-script
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        echo "[SCRIPT] Writing startup script..."
+        cat << 'EOF' > startup-script.sh
+        #!/bin/bash
+        set -e
+        echo "Installing Python and dependencies..."
+        sudo apt-get update -y
+        sudo apt-get install -y python3 python3-pip unzip curl
+        mkdir -p /home/ubuntu/flask-app
+        cd /home/ubuntu/flask-app
+        git clone https://github.com/20481A04K2/repo1.git .
+        python3 -m venv venv
+        source venv/bin/activate
+        sleep 2
+        echo "Installing Flask..."
+        pip install --upgrade pip
+        pip install flask
+        echo "Starting Flask app..."
+        nohup python app.py > flask.log 2>&1 &
+        # Check if Flask app started successfully
+        sleep 5
+        if pgrep -f "app.py" > /dev/null; then
+          STATUS="success"
+          echo "[STARTUP] Flask app started successfully."
+        else
+          STATUS="failure"
+          echo "[STARTUP] Flask app failed to start."
+        fi
+        # Trigger Cloud Function with status
+        CLOUD_FUNCTION_URL="https://function-613125347481.asia-south1.run.app"
+        curl -s -X POST "$$CLOUD_FUNCTION_URL" \
+        -H "Content-Type: application/json" \
+        -d "{\"status\":\"$$STATUS\", \"vm\":\"$$(hostname)\", \"pipeline\":\"my-pipeline\"}"
+        # Exit with proper code for Cloud Build
+        if [[ "$$STATUS" == "failure" ]]; then
+          exit 1
+        fi
+        EOF
+   # ==========================================
   # Step 1: Wait logic for running triggers and MIG VM readiness
   # ==========================================
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
@@ -132,79 +204,7 @@ steps:
             # After waiting, loop will re-evaluate PREV_RUNNING
           fi
         done
-
-
-
-  # ==========================================
-  # Step 2: Generate version tag
-  # ==========================================
-  - name: gcr.io/cloud-builders/gcloud
-    id: generate-version
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        VERSION_TAG="v-$(date +%Y%m%d-%H%M%S)"
-        echo "VERSION_TAG=$$VERSION_TAG" > /workspace/version.env
-        echo "Generated version: $$VERSION_TAG"
-
-  # ==========================================
-  # Step 3: Clone GitHub repo & unzip
-  # ==========================================
-  - name: gcr.io/cloud-builders/git
-    id: clone-repo
-    args:
-      - clone
-      - https://github.com/${_GITHUB_REPO}.git
-      - /workspace/app
-
-  # ==========================================
-  # Step 4: Write startup script to run Flask app
-  # ==========================================
-  - name: gcr.io/cloud-builders/gcloud
-    id: write-startup-script
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        echo "[SCRIPT] Writing startup script..."
-        cat << 'EOF' > startup-script.sh
-        #!/bin/bash
-        set -e
-        echo "Installing Python and dependencies..."
-        sudo apt-get update -y
-        sudo apt-get install -y python3 python3-pip unzip curl
-        mkdir -p /home/ubuntu/flask-app
-        cd /home/ubuntu/flask-app
-        git clone https://github.com/20481A04K2/repo1.git .
-        python3 -m venv venv
-        source venv/bin/activate
-        sleep 2
-        echo "Installing Flask..."
-        pip install --upgrade pip
-        pip install flask
-        echo "Starting Flask app..."
-        nohup python app.py > flask.log 2>&1 &
-        # Check if Flask app started successfully
-        sleep 5
-        if pgrep -f "app.py" > /dev/null; then
-          STATUS="success"
-          echo "[STARTUP] Flask app started successfully."
-        else
-          STATUS="failure"
-          echo "[STARTUP] Flask app failed to start."
-        fi
-        # Trigger Cloud Function with status
-        CLOUD_FUNCTION_URL="https://function-613125347481.asia-south1.run.app"
-        curl -s -X POST "$$CLOUD_FUNCTION_URL" \
-        -H "Content-Type: application/json" \
-        -d "{\"status\":\"$$STATUS\", \"vm\":\"$$(hostname)\", \"pipeline\":\"my-pipeline\"}"
-        # Exit with proper code for Cloud Build
-        if [[ "$$STATUS" == "failure" ]]; then
-          exit 1
-        fi
-        EOF
-  
+ 
 
   # ==========================================
   # Step 5: Create image from MIG VM
